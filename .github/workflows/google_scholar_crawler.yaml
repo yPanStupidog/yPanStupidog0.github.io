@@ -1,15 +1,16 @@
 name: Get Citation Data
 
-on: 
- page_build: 
- schedule:
-  - cron:  '0 8 * * *'
+on:
+  page_build:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install Reqs
       run: |
         sudo apt-get install python3-setuptools
@@ -18,12 +19,19 @@ jobs:
         cd ./google_scholar_crawler
         pip3 install -r requirements.txt
         python3 main.py
-        cd ./results
+      env:
+        GOOGLE_SCHOLAR_ID: ${{ secrets.GOOGLE_SCHOLAR_ID }}
+        SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
+    - name: Push results
+      # Only push when fresh data was actually fetched; if Scholar blocked the
+      # run and main.py exited gracefully without writing files, keep the last
+      # good data instead of failing the workflow.
+      if: hashFiles('google_scholar_crawler/results/gs_data.json') != ''
+      run: |
+        cd ./google_scholar_crawler/results
         git init
         git config --local user.name "${GITHUB_ACTOR}"
         export remote_repo="https://${GITHUB_ACTOR}:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
         git add *.json
         git commit -m "Updated Citation Data"
         git push "${remote_repo}" HEAD:google-scholar-stats --force
-      env: 
-        GOOGLE_SCHOLAR_ID: ${{ secrets.GOOGLE_SCHOLAR_ID }}
