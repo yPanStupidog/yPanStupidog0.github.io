@@ -11,6 +11,7 @@ Strategy (in order):
 import json
 import os
 import random
+import signal
 import sys
 import time
 from datetime import datetime
@@ -21,6 +22,12 @@ from scholarly import scholarly
 SCHOLAR_ID = os.environ["GOOGLE_SCHOLAR_ID"]
 SERPAPI_KEY = os.environ.get("SERPAPI_API_KEY")
 MAX_RETRIES = 5
+# scholarly sets no timeout on its own HTTP calls; when Scholar stalls the
+# connection instead of refusing it, a single attempt can hang forever and
+# the retry loop below never fires. Bound each attempt with SIGALRM (Linux
+# CI runners, single-threaded script) so a hung attempt becomes a normal
+# retryable failure.
+ATTEMPT_TIMEOUT_SECS = 300
 
 
 def via_serpapi():
@@ -70,12 +77,28 @@ def via_serpapi():
     }
 
 
+class _AttemptTimeout(Exception):
+    pass
+
+
+def _alarm_handler(signum, frame):  # noqa: ARG001
+    raise _AttemptTimeout(f"scholarly attempt exceeded {ATTEMPT_TIMEOUT_SECS}s")
+
+
 def via_scholarly():
     last_err = None
+    use_alarm = hasattr(signal, "SIGALRM")
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            auth = scholarly.search_author_id(SCHOLAR_ID)
-            scholarly.fill(auth, sections=["basics", "indices", "counts", "publications"])
+            if use_alarm:
+                signal.signal(signal.SIGALRM, _alarm_handler)
+                signal.alarm(ATTEMPT_TIMEOUT_SECS)
+            try:
+                auth = scholarly.search_author_id(SCHOLAR_ID)
+                scholarly.fill(auth, sections=["basics", "indices", "counts", "publications"])
+            finally:
+                if use_alarm:
+                    signal.alarm(0)  # cancel the alarm; never fires during backoff sleep
             return auth
         except Exception as e:  # noqa: BLE001 - scraping Scholar is flaky by nature
             last_err = e

@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # Backstop: with 5 attempts x (300s attempt timeout + backoff) the script
+    # itself finishes in ~40 min worst case; anything beyond that is a real
+    # hang, fail fast instead of burning the 6h default.
+    timeout-minutes: 90
     steps:
     - uses: actions/checkout@v4
     - name: Install Reqs
